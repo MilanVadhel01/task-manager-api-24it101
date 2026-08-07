@@ -1,100 +1,180 @@
-// Import Express module
-const express = require('express');
+// ─────────────────────────────────────────────
+// PRACTICAL 5 — Task Management API
+// Express + MongoDB + Mongoose
+// ─────────────────────────────────────────────
 
-// Initialize the Express application
-const app = express();
-const port = 5000;
+// Load environment variables from .env file
+// Must be called before anything that reads process.env
+require('dotenv').config();
 
-// Middleware to parse incoming JSON requests
+// Import required packages
+const express  = require('express');
+const mongoose = require('mongoose');
+
+// Import our Task model
+const Task = require('./models/Task');
+
+// ─────────────────────────────────────────────
+// APP SETUP
+// ─────────────────────────────────────────────
+const app  = express();
+const PORT = 5000;
+
+// Middleware: parse incoming JSON request bodies
 app.use(express.json());
 
-// 1. Global Logging Middleware
-// Logs the HTTP Method, URL, and Timestamp for every incoming request
+// ─────────────────────────────────────────────
+// GLOBAL LOGGING MIDDLEWARE
+// Logs every request with method, URL, and time
+// ─────────────────────────────────────────────
 app.use((req, res, next) => {
     const timestamp = new Date().toISOString();
     console.log(`${req.method} ${req.url} - ${timestamp}`);
     next();
 });
 
-// 2. Data Storage
-// In-memory array to store our tasks (No database used)
-let tasks = [];
-let nextId = 1;
+// ─────────────────────────────────────────────
+// CONNECT TO MONGODB
+// Uses the connection string stored in .env
+// ─────────────────────────────────────────────
+mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => {
+        console.log('✅ Connected to MongoDB successfully');
+    })
+    .catch((err) => {
+        console.error('❌ MongoDB connection failed:', err.message);
+        process.exit(1); // Stop the server if DB connection fails
+    });
 
-// 3. CRUD APIs
+// ─────────────────────────────────────────────
+// ROUTES — CRUD OPERATIONS
+// ─────────────────────────────────────────────
 
-// GET /tasks
-// Returns all tasks with status 200
-app.get('/tasks', (req, res) => {
-    res.status(200).json(tasks);
-});
-
-// POST /tasks
-// Creates a new task and returns it with status 201
-app.post('/tasks', (req, res) => {
-    const { title } = req.body;
-    
-    // Create the new task object
-    const newTask = {
-        id: nextId++,
-        title: title
-    };
-    
-    // Add to our in-memory array
-    tasks.push(newTask);
-    
-    // Return the created task
-    res.status(201).json(newTask);
-});
-
-// PUT /tasks/:id
-// Updates the title of an existing task. Returns 404 if not found.
-app.put('/tasks/:id', (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    const { title } = req.body;
-    
-    // Find the task in the array
-    const task = tasks.find(t => t.id === id);
-    
-    if (!task) {
-        // If task doesn't exist, return 404
-        return res.status(404).json({ error: "Task not found" });
+// ── GET /tasks ───────────────────────────────
+// Returns all tasks from the database
+app.get('/tasks', async (req, res, next) => {
+    try {
+        // Fetch every task document from MongoDB
+        const tasks = await Task.find();
+        res.status(200).json(tasks);
+    } catch (err) {
+        // Pass any error to the global error handler
+        next(err);
     }
-    
-    // Update the task title
-    task.title = title;
-    
-    // Return updated task
-    res.status(200).json(task);
 });
 
-// DELETE /tasks/:id
-// Deletes a task by ID. Returns 404 if not found.
-app.delete('/tasks/:id', (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    
-    // Find the index of the task
-    const taskIndex = tasks.findIndex(t => t.id === id);
-    
-    if (taskIndex === -1) {
-        // If task doesn't exist, return 404
-        return res.status(404).json({ error: "Task not found" });
+// ── Supplementary Problem 3 ──────────────────
+// GET /tasks/:id
+// Returns a single task by its MongoDB _id
+// Returns 404 JSON if not found
+app.get('/tasks/:id', async (req, res, next) => {
+    try {
+        const task = await Task.findById(req.params.id);
+
+        // If no task was found, respond with 404
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        res.status(200).json(task);
+    } catch (err) {
+        next(err);
     }
-    
-    // Remove the task from the array
-    tasks.splice(taskIndex, 1);
-    
-    // Return success message
-    res.status(200).json({ message: "Task successfully deleted" });
 });
 
-// 4. Global Error Handling Middleware
-// Must be the LAST app.use(). Catches any unhandled errors.
+// ── POST /tasks ───────────────────────────────
+// Creates a new task and saves it to the database
+app.post('/tasks', async (req, res, next) => {
+    try {
+        // Destructure allowed fields from the request body
+        const { title, description, completed, priority } = req.body;
+
+        // Create a new task document using the Task model
+        const newTask = await Task.create({
+            title,
+            description,
+            completed,
+            priority
+        });
+
+        // Respond with the created task and status 201
+        res.status(201).json(newTask);
+    } catch (err) {
+        // Handle Mongoose validation errors cleanly
+        if (err.name === 'ValidationError') {
+            // Extract only the human-readable messages
+            const messages = Object.values(err.errors).map(e => e.message);
+            return res.status(400).json({ error: messages.join(', ') });
+        }
+        next(err);
+    }
+});
+
+// ── PUT /tasks/:id ────────────────────────────
+// Updates an existing task by its MongoDB _id
+// Returns 404 if the task does not exist
+app.put('/tasks/:id', async (req, res, next) => {
+    try {
+        const { title, description, completed, priority } = req.body;
+
+        // findByIdAndUpdate: find by _id, apply changes, return updated doc
+        const updatedTask = await Task.findByIdAndUpdate(
+            req.params.id,
+            { title, description, completed, priority },
+            {
+                new: true,           // return the updated document
+                runValidators: true  // run schema validators on update
+            }
+        );
+
+        // If no matching task was found, return 404
+        if (!updatedTask) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        res.status(200).json(updatedTask);
+    } catch (err) {
+        // Handle Mongoose validation errors cleanly
+        if (err.name === 'ValidationError') {
+            const messages = Object.values(err.errors).map(e => e.message);
+            return res.status(400).json({ error: messages.join(', ') });
+        }
+        next(err);
+    }
+});
+
+// ── DELETE /tasks/:id ─────────────────────────
+// Deletes a task by its MongoDB _id
+// Returns 404 if the task does not exist
+app.delete('/tasks/:id', async (req, res, next) => {
+    try {
+        const deletedTask = await Task.findByIdAndDelete(req.params.id);
+
+        // If no matching task was found, return 404
+        if (!deletedTask) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        res.status(200).json({ message: 'Task successfully deleted' });
+    } catch (err) {
+        next(err);
+    }
+});
+
+// ─────────────────────────────────────────────
+// GLOBAL ERROR HANDLING MIDDLEWARE
+// Must be the LAST app.use()
+// Catches any error passed via next(err)
+// ─────────────────────────────────────────────
 app.use((err, req, res, next) => {
-    res.status(500).json({ error: "Something went wrong" });
+    console.error('Server error:', err.message);
+    res.status(500).json({ error: 'Something went wrong' });
 });
 
-// Start the server
-app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+// ─────────────────────────────────────────────
+// START THE SERVER
+// ─────────────────────────────────────────────
+app.listen(PORT, () => {
+    console.log(`🚀 Server is running on port ${PORT}`);
 });
