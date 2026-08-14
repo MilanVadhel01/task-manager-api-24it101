@@ -10,6 +10,7 @@ require('dotenv').config();
 // Import required packages
 const express  = require('express');
 const mongoose = require('mongoose');
+const cors = require('cors');
 
 // Import our Task model
 const Task = require('./models/Task');
@@ -19,6 +20,9 @@ const Task = require('./models/Task');
 // ─────────────────────────────────────────────
 const app  = express();
 const PORT = 5000;
+
+// Middleware: CORS
+app.use(cors());
 
 // Middleware: parse incoming JSON request bodies
 app.use(express.json());
