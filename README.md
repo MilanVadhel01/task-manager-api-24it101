@@ -3,6 +3,8 @@
 A beginner-friendly **REST API** built with **Node.js**, **Express.js**, and **MongoDB (Mongoose)**.  
 This project replaces the Practical 4 in-memory storage with a real MongoDB database.
 
+> ⚡ Extended in later practicals: **Practical 9** adds server-side caching with `node-cache`, and **Practical 10** adds asynchronous event-driven notifications using Node's built-in `events` module.
+
 ---
 
 ## 🚀 Tech Stack
@@ -14,6 +16,8 @@ This project replaces the Practical 4 in-memory storage with a real MongoDB data
 | MongoDB | NoSQL database |
 | Mongoose | MongoDB ODM (Object Data Modelling) |
 | dotenv | Load environment variables from `.env` |
+| node-cache | Server-side in-memory caching (Practical 9) |
+| events (Node built-in) | Event-driven async notifications (Practical 10) |
 
 ---
 
@@ -23,6 +27,10 @@ This project replaces the Practical 4 in-memory storage with a real MongoDB data
 practical-task-api/
 ├── models/
 │   └── Task.js          # Mongoose schema & model
+├── cache.js             # Shared node-cache instance, 60s TTL (Practical 9)
+├── events.js            # Shared EventEmitter instance (Practical 10)
+├── listeners.js         # task-created / task-deleted / error listeners (Practical 10)
+├── compare.js           # EDA vs non-EDA response-time demo (Practical 10)
 ├── .env                 # Your MongoDB connection string (git-ignored)
 ├── .env.example         # Template for environment variables
 ├── .gitignore           # Ignores node_modules/ and .env
@@ -208,6 +216,69 @@ Deletes a task by ID.
 | 1 | `priority` field | Enum: `low`, `medium`, `high` — default: `low` |
 | 2 | Pre-save hook | Auto-trims whitespace from `title` before every save |
 | 3 | `GET /tasks/:id` | Returns single task or `404` if not found |
+
+---
+
+## 🧠 Practical 9 — Server-Side Caching
+
+- `GET /tasks` and `GET /tasks/:id` check an in-memory **node-cache** (60s TTL) before querying MongoDB
+- Cache hits return instantly without touching the database (`📦 Cache HIT` in the console)
+- All write routes (POST / PUT / DELETE) invalidate the cache so the next GET is fresh
+- `GET /debug/cache-stats` exposes `{ hits, misses, currentKeys, keyCount }`
+
+---
+
+## ⚡ Practical 10 — Asynchronous Processing (Event-Driven Architecture)
+
+POST and DELETE routes no longer do their "extra work" inline. After the HTTP response
+is sent, they **emit events** on a shared emitter, and registered listeners handle the
+rest asynchronously — so slow post-processing never delays the API response.
+
+### New files
+
+| File | Purpose |
+|---|---|
+| `events.js` | Exports one shared `TaskEvents` (extends Node's `EventEmitter`) instance |
+| `listeners.js` | Registers `task-created`, `task-deleted` and `error` listeners once at startup |
+| `compare.js` | Demo comparing response times with vs without EDA (`node compare.js`) |
+
+### How it works
+
+```
+POST /tasks ──► save to DB ──► invalidate cache ──► log [API] ──► res.status(201).json() ──► emit('task-created')
+                                                                                        └─► listener: log start ──► (2s async delay) ──► notification + completion log
+```
+
+- `emit()` always happens **after** the response is sent
+- The `task-created` listener simulates a slow handler (`SIMULATED_DELAY_MS = 2000`), with try/catch **inside** the `setTimeout` callback so async errors are forwarded to the `error` listener instead of crashing the server
+- The `error` listener is registered with `.on()`, so an emitted `error` never crashes the server
+
+### Expected console output after `POST /tasks`
+
+```
+[API] Response sent at 2026-09-30T12:00:00.000Z          ← response sent first
+[Listener] task-created started at 2026-09-30T12:00:00.001Z
+    ... ~2s gap (client already has the response) ...
+[Notification] Task "X" created at 2026-09-30T12:00:02.001Z | assigned to: Unassigned
+[Listener] task-created completed at 2026-09-30T12:00:02.002Z
+```
+
+After a successful `DELETE /tasks/:id`: `[Notification] Task "X" deleted at <ISO>`
+
+> **Note:** The Task schema has no `assignedUser` field, so notifications fall back to `Unassigned`.
+
+### Run the timing comparison
+
+```bash
+node compare.js
+```
+
+Sample result:
+
+```
+Without EDA (inline) — avg response time: 6006 ms
+With EDA (events)    — avg response time: 0 ms
+```
 
 ---
 
