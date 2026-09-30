@@ -19,6 +19,13 @@ const Task = require('./models/Task');
 // Used to avoid hitting MongoDB on every GET /tasks request
 const cache = require('./cache');
 
+// Import shared event emitter (Practical 10)
+const taskEvents = require('./events');
+
+// Register all event listeners ONCE at startup,
+// BEFORE any emit() can fire (Practical 10)
+require('./listeners');
+
 // ─────────────────────────────────────────────
 // APP SETUP
 // ─────────────────────────────────────────────
@@ -133,8 +140,16 @@ app.post('/tasks', async (req, res, next) => {
         // Invalidate the all_tasks cache so the next GET reflects the new task
         cache.del('all_tasks');
 
+        // Log BEFORE the response is sent so the sync vs
+        // async ordering is visible in the console (Practical 10)
+        console.log(`[API] Response sent at ${new Date().toISOString()}`);
+
         // Respond with the created task and status 201
         res.status(201).json(newTask);
+
+        // Emit AFTER the response is sent — the listener's slow
+        // work must never delay the HTTP response (Practical 10)
+        taskEvents.emit('task-created', newTask);
     } catch (err) {
         // Handle Mongoose validation errors cleanly
         if (err.name === 'ValidationError') {
@@ -199,7 +214,11 @@ app.delete('/tasks/:id', async (req, res, next) => {
         cache.del('all_tasks');
         cache.del(`task_${req.params.id}`);
 
+        // Respond BEFORE emitting so the listener never delays the HTTP response
         res.status(200).json({ message: 'Task successfully deleted' });
+
+        // Emit with the document returned by the delete call (Practical 10)
+        taskEvents.emit('task-deleted', deletedTask);
     } catch (err) {
         next(err);
     }
