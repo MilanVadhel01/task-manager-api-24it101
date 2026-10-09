@@ -4,6 +4,13 @@ A beginner-friendly **REST API** built with **Node.js**, **Express.js**, and **M
 This project replaces the Practical 4 in-memory storage with a real MongoDB database.
 
 > ⚡ Extended in later practicals: **Practical 9** adds server-side caching with `node-cache`, and **Practical 10** adds asynchronous event-driven notifications using Node's built-in `events` module.
+>
+> 🐳 **Practical 11:** the API is **containerized with Docker**. This repo gained a
+> `Dockerfile` (node:22-alpine, production deps only) and a `.dockerignore` that keeps
+> the real `.env` out of the image. The API is started by the `docker-compose.yml`
+> located in the *frontend* repo (`portfolio-24it101`), which builds this backend from
+> its sibling directory and supplies `MONGO_URI=mongodb://mongodb:27017/taskdb` at
+> runtime. Your local `.env` / Atlas setup still works for non-Docker development.
 
 ---
 
@@ -18,6 +25,8 @@ This project replaces the Practical 4 in-memory storage with a real MongoDB data
 | dotenv | Load environment variables from `.env` |
 | node-cache | Server-side in-memory caching (Practical 9) |
 | events (Node built-in) | Event-driven async notifications (Practical 10) |
+| Docker | Container image for the API (Practical 11) |
+| Docker Compose | Orchestrates API + frontend + MongoDB (Practical 11) |
 
 ---
 
@@ -31,9 +40,11 @@ practical-task-api/
 ├── events.js            # Shared EventEmitter instance (Practical 10)
 ├── listeners.js         # task-created / task-deleted / error listeners (Practical 10)
 ├── compare.js           # EDA vs non-EDA response-time demo (Practical 10)
-├── .env                 # Your MongoDB connection string (git-ignored)
+├── .env                 # Your MongoDB connection string (git-ignored, NOT copied into Docker)
 ├── .env.example         # Template for environment variables
 ├── .gitignore           # Ignores node_modules/ and .env
+├── Dockerfile           # node:22-alpine image — /app, npm ci --omit=dev, EXPOSE 5000 (P11)
+├── .dockerignore        # Keeps .env, node_modules/, .git/ out of the image (P11)
 ├── package.json         # Project metadata & dependencies
 ├── package-lock.json    # Locked dependency versions
 └── server.js            # Main Express application
@@ -43,20 +54,34 @@ practical-task-api/
 
 ## ⚙️ Setup & Installation
 
-### 1. Clone the repository
+### 🐳 Option A — Docker (Practical 11)
+
+No local Node or MongoDB setup needed. The Compose file lives in the **frontend** repo:
+
+```bash
+cd ../portfolio-24it101
+docker compose up --build     # API on http://localhost:5000
+```
+
+No `.env` is required in Docker mode — Compose injects
+`MONGO_URI=mongodb://mongodb:27017/taskdb` (see [Practical 11](#-practical-11--containerization-docker) below).
+
+### Option B — Manual (original workflow, uses MongoDB Atlas)
+
+#### 1. Clone the repository
 
 ```bash
 git clone https://github.com/MilanVadhel01/task-manager-api-24it101.git
 cd task-manager-api-24it101
 ```
 
-### 2. Install dependencies
+#### 2. Install dependencies
 
 ```bash
 npm install
 ```
 
-### 3. Configure environment variables
+#### 3. Configure environment variables
 
 Create a `.env` file in the root directory:
 
@@ -70,7 +95,7 @@ Then open `.env` and fill in your MongoDB Atlas connection string:
 MONGO_URI=mongodb+srv://<username>:<password>@cluster0.xxxxx.mongodb.net/taskdb?retryWrites=true&w=majority
 ```
 
-### 4. Start the server
+#### 4. Start the server
 
 ```bash
 npm start

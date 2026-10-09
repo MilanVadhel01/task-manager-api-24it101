@@ -6,6 +6,8 @@ A beginner-friendly REST API for managing tasks (CRUD), built as a college pract
 
 Extended by **Practical 9** (server-side caching with node-cache) and **Practical 10** (asynchronous event-driven notifications using Node's built-in `events` module — no new npm packages).
 
+Containerized by **Practical 11**: this repo has a `Dockerfile` + `.dockerignore`; the `docker-compose.yml` lives in the frontend repo (`portfolio-24it101`) and builds this backend from its sibling directory alongside `mongo:7.0` on the `app-network` bridge network with a `mongo_data` volume.
+
 ## 2. Tech Stack
 
 | Dependency | Version | Purpose |
@@ -19,7 +21,7 @@ Extended by **Practical 9** (server-side caching with node-cache) and **Practica
 | events | Node built-in | Event emitter for async task notifications (Practical 10 — no npm install needed) |
 
 - **Language:** JavaScript (CommonJS — `require` / `module.exports`)
-- **Database:** MongoDB Atlas (cloud-hosted)
+- **Database:** MongoDB Atlas (cloud) for local manual runs; Compose-managed `mongo:7.0` container (`mongodb://mongodb:27017/taskdb`) when started with Docker (Practical 11)
 - **No TypeScript, no ESM, no test framework, no linter/formatter configured.**
 
 ## 3. Architecture
@@ -36,6 +38,8 @@ project-root/
 ├── .env                  # MONGO_URI (git-ignored)
 ├── .env.example          # Template for .env
 ├── .gitignore            # Ignores node_modules/, .env
+├── Dockerfile            # node:22-alpine API image, EXPOSE 5000 (Practical 11)
+├── .dockerignore         # Keeps .env, node_modules/, .git/ out of image (Practical 11)
 ├── package.json          # Scripts, deps, metadata
 └── README.md             # Setup guide & API docs
 ```
@@ -49,13 +53,14 @@ project-root/
 5. Middleware order: `cors()` → `express.json()` → request logger → routes → debug endpoint → global error handler.
 6. `server.js` requires `./events` (shared emitter) and `./listeners` (registers all listeners once at startup, before any emit).
 7. POST and DELETE routes emit `task-created` / `task-deleted` **after** sending the HTTP response; listeners do the slow work asynchronously (Practical 10).
+8. **Docker (Practical 11):** Compose sets `MONGO_URI` as a container env var, so `dotenv` (which never overwrites existing env vars) uses it even though no `.env` file exists in the image. Containers reach each other by service name on `app-network` — the backend connects to host `mongodb`, never `localhost`.
 
 ### Data flow (with caching — Practical 9)
 
 ```
 Client → CORS → JSON parser → Logger → Route handler
                                            ├─ cache HIT → return cached JSON (no DB query)
-                                           └─ cache MISS → Mongoose → MongoDB Atlas → cache.set() → JSON
+                                           └─ cache MISS → Mongoose → MongoDB (Atlas, or the Compose `mongodb` container) → cache.set() → JSON
                                            ↓ (on write: POST/PUT/DELETE)
                                         cache.del('all_tasks') + cache.del('task_{id}') → invalidate
                                            ↓ (on error)
@@ -85,6 +90,7 @@ listeners.js: task-created → log start → setTimeout(2000) → try/catch → 
 | Dev server (watch) | _None configured_ (no `nodemon` — **assumption**: add `nodemon` as a devDep if needed) |
 | Lint / Format | _None configured_ |
 | Build | _N/A — no build step_ |
+| Start with Docker (P11) | `cd ../portfolio-24it101 && docker compose up --build` (Compose file lives in the frontend repo) |
 
 ### First-time setup
 
@@ -92,11 +98,15 @@ listeners.js: task-created → log start → setTimeout(2000) → try/catch → 
 2. `copy .env.example .env` — then fill in a valid `MONGO_URI`
 3. `npm start` — server listens on **port 5000**
 
+**Or skip all of it (Practical 11):** `cd ../portfolio-24it101 && docker compose up --build` — the container gets `MONGO_URI` from Compose and needs no `.env`.
+
 ### Environment variables
 
 | Variable | Required | Description |
 |---|---|---|
 | `MONGO_URI` | Yes | MongoDB Atlas connection string |
+
+In Docker mode (Practical 11) `MONGO_URI` is supplied by `docker-compose.yml` (`mongodb://mongodb:27017/taskdb`) — no `.env` file is created or needed inside the container.
 
 ## 5. Conventions
 
@@ -159,6 +169,8 @@ listeners.js: task-created → log start → setTimeout(2000) → try/catch → 
 | `.env` | Holds `MONGO_URI` — **never commit** |
 | `.env.example` | Template showing expected env var shape |
 | `package.json` | Only script is `start`; 5 production deps; no devDeps |
+| `Dockerfile` | API container image — node:22-alpine, `WORKDIR /app`, `npm ci --omit=dev`, `EXPOSE 5000` (Practical 11) |
+| `.dockerignore` | Keeps `.env`, `node_modules/`, `.git/` out of the build context (Practical 11) |
 
 ## 7. Gotchas
 
@@ -176,10 +188,13 @@ listeners.js: task-created → log start → setTimeout(2000) → try/catch → 
 - **`task-created` listener work can silently fail logs.** Errors inside the `setTimeout` are forwarded to the `error` listener and logged, but nothing retries or persists them.
 - **`compare.js` busy-waits on purpose.** The No-EDA half blocks the event loop with a spin loop to simulate a truly synchronous handler — don't reuse that pattern in real code.
 - **No event delivery guarantee.** If the process crashes between `res.json()` and `emit()`, the notification is simply lost — acceptable for a teaching demo of EDA ordering.
+- **Port 5000 conflicts with Docker.** A local `npm start` instance must be stopped before `docker compose up` can publish `5000:5000`.
+- **In Docker, `localhost` is the container itself.** Use the Compose service name (`mongodb`) for DB connections; the frontend's browser-side `http://localhost:5000` is the opposite case (host machine).
 
 ## 8. Out of Scope
 
 - **`node_modules/`** — auto-generated; never edit.
 - **`package-lock.json`** — auto-generated; don't manually edit; let `npm install` regenerate it.
 - **`.env`** — contains real credentials; never commit or share.
-- **No deployment config exists** (no Dockerfile, no CI/CD, no Procfile). Deployment is not part of this practical.
+- **No CI/CD or cloud deployment config** (no pipeline, no Procfile) — Practical 11 adds only local Docker/Compose tooling; deploying to a cloud platform is still out of scope.
+- **`docker-compose.yml` lives in the frontend repo** — don't add a second Compose file here; the stack is defined once in `portfolio-24it101/`.
