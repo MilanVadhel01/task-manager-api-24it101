@@ -294,6 +294,106 @@ With EDA (events)    — avg response time: 0 ms
 
 ---
 
+## 🐳 Practical 11 — Containerization (Docker)
+
+The API runs as a Docker container orchestrated together with the React frontend
+and a MongoDB server by **Docker Compose**. The Compose file lives in the
+*frontend* repository (`portfolio-24it101/docker-compose.yml`) and builds this
+backend from its **sibling directory**:
+
+```yaml
+backend:
+  build:
+    context: ../task-manager-api-24it101   # this repo
+    dockerfile: Dockerfile
+```
+
+The two Git repositories remain separate.
+
+### Files added in this practical
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | `node:22-alpine` image → `/app`, `npm ci --omit=dev`, copies source, `EXPOSE 5000`, `npm start` |
+| `.dockerignore` | Excludes `node_modules/`, **`.env`**, `.git/`, logs, `context.md` from the build context |
+
+### How configuration works inside the container
+
+1. The image does **not** contain `.env` — `.dockerignore` blocks it, so Atlas
+   credentials never end up in an image layer.
+2. `docker-compose.yml` sets the environment variable for the container:
+   ```yaml
+   environment:
+     MONGO_URI: mongodb://mongodb:27017/taskdb
+   ```
+3. `require('dotenv').config()` loads `.env` **only if present** and never
+   overwrites variables that already exist in the environment — so the
+   Compose-provided URI wins *inside the container*, while your local
+   `.env` (Atlas) is untouched for `npm start` on your machine.
+
+**Why `mongodb` and not `localhost`?** In Docker, each container is its own
+machine. MongoDB runs in a *different* container, reachable by its **service
+name** `mongodb` on the `app-network` bridge network. `localhost` inside the
+backend container would mean the backend container itself — where no database
+is running. (The frontend is the opposite case: the *browser* runs on the host,
+so it keeps using `http://localhost:5000`.)
+
+### Dockerfile `EXPOSE` vs Compose `ports`
+
+- `EXPOSE 5000` — documentation only; tells Docker which port the app listens
+  on. **Nothing is reachable from your machine because of it.**
+- `ports: "5000:5000"` in `docker-compose.yml` — actually forwards the host
+  port to the container (`HOST:CONTAINER`), which is what makes
+  `http://localhost:5000/tasks` work from your browser/Postman.
+
+### Why host `node_modules` is not copied
+
+The host's `node_modules` is built for your OS (Windows `.node` binaries) and
+adds thousands of files to the build context. The Dockerfile installs the
+lockfile versions itself with `npm ci --omit=dev` (production deps only),
+giving a small, reproducible Linux install.
+
+### Running the stack
+
+```bash
+# All commands run from the FRONTEND repo — the Compose file lives there
+cd ../portfolio-24it101
+
+docker compose up --build        # build + start frontend, backend, mongodb
+docker compose ps                # check statuses
+docker compose logs -f backend   # watch API logs (cache HIT/MISS, events)
+docker compose down              # stop (mongo_data volume is kept)
+```
+
+Verify:
+
+```bash
+curl http://localhost:5000/tasks           # CRUD API
+curl http://localhost:5000/debug/cache-stats   # Practical 9 cache stats
+docker compose exec backend printenv MONGO_URI # → mongodb://mongodb:27017/taskdb
+```
+
+### What still works in containers
+
+- Full CRUD API (`GET/POST/PUT/DELETE /tasks`)
+- Practical 9 caching — watch `📦 Cache HIT` / `🔍 Cache MISS` in
+  `docker compose logs backend`, stats at `GET /debug/cache-stats`
+- Practical 10 event-driven notifications — `docker compose logs backend`
+  after a `POST /tasks` shows `[Listener] task-created started` and the
+  `[Notification] ...` ~2 s later, *after* the HTTP response was sent
+- Task data persists across restarts thanks to the `mongo_data` named volume
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `MongoDB connection failed` on start | `docker compose ps` — mongodb must be *healthy*; check `docker compose logs mongodb` |
+| `port 5000 already allocated` | A local `npm start` instance is running — stop it first |
+| Want a clean slate for data | `docker compose down -v` (⚠️ deletes the `mongo_data` volume) |
+| Changed source code | `docker compose up --build` |
+
+---
+
 ## 👤 Author
 
 **Milan Vadhel**  
