@@ -25,6 +25,11 @@ const MONGO_TEST_URI =
 // Connect to the test database once, before any test runs
 beforeAll(async () => {
     await mongoose.connect(MONGO_TEST_URI);
+
+    // Start from a clean test database, even if an earlier run
+    // (or a manual smoke test) left records behind
+    await Task.deleteMany({});
+    cache.flushAll();
 });
 
 // Clean the test database and the in-memory cache between tests,

@@ -17,6 +17,10 @@ This project replaces the Practical 4 in-memory storage with a real MongoDB data
 > ⚙️ **Practical 12:** a **GitHub Actions CI pipeline** (`.github/workflows/ci.yml`)
 > installs dependencies and runs **Jest + Supertest** tests against a MongoDB service
 > container on every push to `main`. See [Continuous Integration](#-continuous-integration).
+>
+> 🤖 **Practical 13:** the API integrates **OpenRouter** (via the official `openai` SDK)
+> so the frontend can request an **AI-generated task description** from a task title.
+> See [AI Integration](#-ai-integration--practical-13).
 
 ---
 
@@ -36,6 +40,8 @@ This project replaces the Practical 4 in-memory storage with a real MongoDB data
 | Jest | Automated test runner (Practical 12) |
 | Supertest | HTTP assertions against the Express API (Practical 12) |
 | GitHub Actions | CI pipeline: install dependencies + run tests (Practical 12) |
+| openai (SDK) | OpenAI-compatible client pointed at OpenRouter (Practical 13) |
+| OpenRouter | Free AI model API used for task descriptions (Practical 13) |
 
 ---
 
@@ -108,6 +114,17 @@ Then open `.env` and fill in your MongoDB Atlas connection string:
 ```env
 MONGO_URI=mongodb+srv://<username>:<password>@cluster0.xxxxx.mongodb.net/taskdb?retryWrites=true&w=majority
 ```
+
+Add the AI settings as well (see [AI Integration](#-ai-integration--practical-13) for
+how to get a free key):
+
+```env
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_MODEL=openrouter/free
+```
+
+The API works without these values — the AI route then returns its fallback message —
+but the **Generate Description** feature needs them.
 
 #### 4. Start the server
 
@@ -505,6 +522,215 @@ The badge at the top of this README always shows the latest `main` run:
 
 ```markdown
 [![CI Pipeline](https://github.com/MilanVadhel01/task-manager-api-24it101/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MilanVadhel01/task-manager-api-24it101/actions/workflows/ci.yml)
+```
+
+---
+
+## 🤖 AI Integration — Practical 13
+
+### Purpose
+
+The **Generate Description** button in the task creation form turns a task title into a
+short, professional description suggestion. The suggestion is inserted into the existing
+description textarea as **editable text** — it is never saved automatically. The user must
+still review it and submit the normal task form.
+
+### OpenRouter integration
+
+The backend uses the official `openai` npm package against OpenRouter's
+OpenAI-compatible endpoint. The client is created once in `server.js`:
+
+```js
+const OpenAI = require('openai');
+
+const client = new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: 'https://openrouter.ai/api/v1',
+    timeout: 20000,   // stop waiting after 20 seconds
+    maxRetries: 0     // the route retries once itself — protects the free quota
+});
+```
+
+The key is read from the environment; if it is missing, no client is created and the
+route immediately returns its graceful fallback.
+
+Each request uses **chat completions** with:
+
+- a **system message** describing the job (2–4 sentence professional description, no markdown)
+- **only the trimmed task title** as the user message
+- `temperature: 0.6`
+- `max_tokens: 1000`
+- the model from `process.env.OPENROUTER_MODEL` (default `openrouter/free`)
+
+The model name is never hardcoded in the request logic, so the free model can be changed
+in `.env` without touching any code.
+
+> **Why `max_tokens` is 1000 and not 160:** `openrouter/free` is an auto-router that picks
+a different free model per request, and many free models are *reasoning* models. With a
+160-token budget they spend every token on hidden reasoning, finish with
+`finish_reason: "length"` and return **no text at all** — which surfaced as the
+"temporarily unavailable" fallback on most clicks. The route now allows enough tokens for
+thinking plus the answer, waits up to 20s (slow free models), and retries **once** with a
+freshly routed model if the first attempt returns nothing or times out. Longer results are
+trimmed to 600 characters on a sentence boundary.
+
+### API endpoint
+
+`POST /api/ai/generate-description`
+
+**Request:**
+
+```json
+{
+  "title": "Complete Machine Learning practical"
+}
+```
+
+An optional `taskId` may be sent for an existing task; it is only used for rate limiting.
+
+**Success `200`:**
+
+```json
+{
+  "description": "Complete the assigned Machine Learning practical exercises, implement the required algorithms, execute the experiments and document the results.",
+  "fallback": false
+}
+```
+
+**Validation error `400`:**
+
+```json
+{ "error": "Title is required" }
+```
+
+Titles longer than **150 characters** are rejected with a `400` as well.
+
+**Rate limited `429`:**
+
+```json
+{
+  "description": "",
+  "fallback": true,
+  "message": "Please wait 42 seconds before generating another description for this task.",
+  "retryAfterSeconds": 42
+}
+```
+
+**AI unavailable `200` (graceful fallback):**
+
+```json
+{
+  "description": "",
+  "fallback": true,
+  "message": "AI suggestions are temporarily unavailable. Please enter your task description manually."
+}
+```
+
+Two other failure messages are returned in the same `fallback: true` shape, so the user can
+tell what actually happened:
+
+| Situation | `message` |
+|---|---|
+| Free-model daily quota used up (`429 ... free-models-per-day`) | *The free AI quota for today is used up. Please enter your task description manually, or try again tomorrow.* |
+| Provider rate-limiting (`429`) | *The AI provider is busy right now. Please try again in a moment, or enter the description manually.* |
+| Timeout, bad key, network or empty completion | *AI suggestions are temporarily unavailable. Please enter your task description manually.* |
+
+A `429` is not retried (it cannot clear within a retry). A failed generation also releases
+the 60-second rate-limit slot, so clicking **Generate** again works immediately instead of
+making the user wait out the cooldown.
+
+> **Free-tier limit:** a free OpenRouter account gets **50 free-model requests per day**
+(`GET https://openrouter.ai/api/v1/key` → `free_model_daily_requests`). Each suggestion uses
+one or two, so the route can stop working near the end of a testing day. The count resets
+daily; adding credit to the account raises it to 1000/day.
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `OPENROUTER_API_KEY` | For AI features | Free OpenRouter key — **backend only**, never sent to the browser |
+| `OPENROUTER_MODEL` | No | Model name, default `openrouter/free` |
+
+`MONGO_URI` (and `MONGO_TEST_URI` for tests) are unchanged.
+
+**Getting a free key:**
+
+1. Sign in at [openrouter.ai](https://openrouter.ai)
+2. Open **Keys** → **Create Key**
+3. Copy the key into the backend `.env`:
+
+```env
+OPENROUTER_API_KEY=your_key_here
+OPENROUTER_MODEL=openrouter/free
+```
+
+4. Restart the server (`npm start`). Never commit `.env` — it is ignored by `.gitignore`
+   and excluded from Docker images by `.dockerignore`.
+
+### How the frontend talks to the backend
+
+```
+React (Generate Description)
+  → src/api.js generateTaskDescription(title)
+  → POST http://localhost:5000/api/ai/generate-description
+  → Express route (server.js)
+  → OpenRouter /chat/completions
+  → description returned to React → inserted into the description textarea
+```
+
+While the request is running the button shows **Generating...** and is disabled; it is also
+disabled when the title is empty. On success the textarea is filled (still editable) and the
+disclaimer **“AI-generated suggestion. Please review and edit before saving.”** appears.
+
+### Graceful fallback
+
+A missing API key, network failure, invalid key, unavailable model, empty completion or
+timeout all produce a controlled `fallback: true` response with status `200` (quota and
+rate-limit errors return the clearer messages listed above). The server logs a short reason
+server-side, but provider details and credentials are never sent to the browser. The Express
+server keeps running and all task CRUD routes keep working, so the AI feature is never
+required to create a task.
+
+### Rate limiting
+
+To protect the free quota, the route allows **one AI generation per task per minute**:
+
+- Existing task → key uses its `taskId`
+- New task → key uses the client IP + lower-cased, trimmed title
+
+A `Map` of timestamps is stored **in memory** in the backend process. Repeating a request
+within 60 seconds returns `429` with a clear “Please wait N seconds…” message and never
+calls OpenRouter. Because the state is in memory, it resets on server restart and is not
+shared between multiple server instances.
+
+### Responsible AI and privacy
+
+- Only the **task title** is sent to OpenRouter — no credentials, tokens, passwords,
+  database connection strings or other task metadata.
+- The API key lives exclusively in the backend `.env`; it is never placed in a `VITE_`
+  variable, the React bundle, or browser requests.
+- Generated text is a **suggestion, not a fact**: it may be inaccurate or generic. The UI
+  asks the user to review and edit it before saving, and AI output is never saved
+  automatically.
+- Task titles are transmitted to an external AI provider when the button is used.
+
+### Running it
+
+```bash
+npm install
+npm start          # API on http://localhost:5000
+```
+The frontend runs separately (`cd ../portfolio-24it101 && npm run dev`). In Docker mode the
+Compose file passes the backend `.env` to the container at runtime (`env_file`), so the same
+key works inside Docker without being baked into any image.
+
+### Tests
+
+`tests/ai.test.js` mocks the `openai` package, so the AI tests never call OpenRouter and
+never consume quota. `tests/ai-no-key.test.js` verifies the missing-key fallback.
+
+```bash
+npm test
 ```
 
 ---
