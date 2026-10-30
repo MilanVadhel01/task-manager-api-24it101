@@ -1,5 +1,7 @@
 # 📝 Task Manager API — Practical 5
 
+[![CI Pipeline](https://github.com/MilanVadhel01/task-manager-api-24it101/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MilanVadhel01/task-manager-api-24it101/actions/workflows/ci.yml)
+
 A beginner-friendly **REST API** built with **Node.js**, **Express.js**, and **MongoDB (Mongoose)**.  
 This project replaces the Practical 4 in-memory storage with a real MongoDB database.
 
@@ -11,6 +13,10 @@ This project replaces the Practical 4 in-memory storage with a real MongoDB data
 > located in the *frontend* repo (`portfolio-24it101`), which builds this backend from
 > its sibling directory and supplies `MONGO_URI=mongodb://mongodb:27017/taskdb` at
 > runtime. Your local `.env` / Atlas setup still works for non-Docker development.
+>
+> ⚙️ **Practical 12:** a **GitHub Actions CI pipeline** (`.github/workflows/ci.yml`)
+> installs dependencies and runs **Jest + Supertest** tests against a MongoDB service
+> container on every push to `main`. See [Continuous Integration](#-continuous-integration).
 
 ---
 
@@ -27,6 +33,9 @@ This project replaces the Practical 4 in-memory storage with a real MongoDB data
 | events (Node built-in) | Event-driven async notifications (Practical 10) |
 | Docker | Container image for the API (Practical 11) |
 | Docker Compose | Orchestrates API + frontend + MongoDB (Practical 11) |
+| Jest | Automated test runner (Practical 12) |
+| Supertest | HTTP assertions against the Express API (Practical 12) |
+| GitHub Actions | CI pipeline: install dependencies + run tests (Practical 12) |
 
 ---
 
@@ -36,6 +45,8 @@ This project replaces the Practical 4 in-memory storage with a real MongoDB data
 practical-task-api/
 ├── models/
 │   └── Task.js          # Mongoose schema & model
+├── tests/
+│   └── tasks.test.js    # Jest + Supertest API tests (Practical 12)
 ├── cache.js             # Shared node-cache instance, 60s TTL (Practical 9)
 ├── events.js            # Shared EventEmitter instance (Practical 10)
 ├── listeners.js         # task-created / task-deleted / error listeners (Practical 10)
@@ -45,6 +56,9 @@ practical-task-api/
 ├── .gitignore           # Ignores node_modules/ and .env
 ├── Dockerfile           # node:22-alpine image — /app, npm ci --omit=dev, EXPOSE 5000 (P11)
 ├── .dockerignore        # Keeps .env, node_modules/, .git/ out of the image (P11)
+├── .github/
+│   └── workflows/
+│       └── ci.yml       # GitHub Actions CI pipeline (Practical 12)
 ├── package.json         # Project metadata & dependencies
 ├── package-lock.json    # Locked dependency versions
 └── server.js            # Main Express application
@@ -416,6 +430,82 @@ docker compose exec backend printenv MONGO_URI # → mongodb://mongodb:27017/tas
 | `port 5000 already allocated` | A local `npm start` instance is running — stop it first |
 | Want a clean slate for data | `docker compose down -v` (⚠️ deletes the `mongo_data` volume) |
 | Changed source code | `docker compose up --build` |
+
+---
+
+## 🔄 Continuous Integration
+
+**Continuous Integration (CI)** means automatically integrating and validating every code
+change: a machine checks out the code, installs it, and runs the test suite, so problems
+are caught immediately instead of at submission time.
+
+**Continuous Deployment (CD)** goes one step further — validated code is deployed
+automatically. This practical demonstrates **CI only**: the workflow installs
+dependencies and runs automated tests; it does **not** deploy the application.
+
+### The workflow
+
+The pipeline lives at `.github/workflows/ci.yml`, is named **CI Pipeline**, and runs
+automatically on every push to the `main` branch.
+
+| Stage | What happens |
+|---|---|
+| Checkout | `actions/checkout@v4` downloads the repository into the runner |
+| Node setup | `actions/setup-node@v4` installs Node.js **22** (the project's runtime) and caches npm downloads |
+| MongoDB | GitHub starts a `mongo:7.0` **service container** on port `27017`; a health check (`db.runCommand({ ping: 1 })`) makes the job wait until the database responds |
+| Install | `npm install` installs dependencies from `package.json` / `package-lock.json` |
+| Test | `npm test` runs `jest --runInBand`; **Supertest** sends real HTTP requests to the exported Express app without opening a port |
+
+The job is called `build-and-test` and runs on `ubuntu-latest`.
+
+### Database used in CI
+
+The tests never touch real application data. The workflow sets:
+
+```yaml
+env:
+  MONGO_TEST_URI: mongodb://127.0.0.1:27017/taskdb_test
+```
+
+so the suite connects to the throwaway `taskdb_test` database inside the MongoDB service
+container. No MongoDB Atlas credentials are used in CI, and no secrets are stored in the
+repository.
+
+### Automated tests
+
+| Test | What it verifies |
+|---|---|
+| `GET /tasks` | Returns `200`, an array, and the real Task document shape (`_id`, `title`, `description`, `completed`, `priority`, `createdAt`) |
+| `GET /tasks/:id` (missing id) | Returns `404` with the real error body `{ "error": "Task not found" }` for a valid but nonexistent ObjectId |
+
+`tests/tasks.test.js` connects to the test database before the suite, deletes test
+records and flushes the `node-cache` between tests, and closes the Mongoose connection
+at the end.
+
+### Running the tests locally
+
+```bash
+npm install
+npm test
+```
+
+Local runs use `MONGO_TEST_URI` when it is set and otherwise fall back to
+`mongodb://127.0.0.1:27017/taskdb_test`, so a local MongoDB must be running. Never point
+`MONGO_TEST_URI` at your real database.
+
+### Viewing results
+
+Open the repository on GitHub → **Actions** tab → **CI Pipeline**. Every push to `main`
+appears as a run: a green checkmark means the tests passed, a red X means a test failed.
+Click the run → `build-and-test` → **Run automated tests** to read the Jest output.
+
+### Status badge
+
+The badge at the top of this README always shows the latest `main` run:
+
+```markdown
+[![CI Pipeline](https://github.com/MilanVadhel01/task-manager-api-24it101/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MilanVadhel01/task-manager-api-24it101/actions/workflows/ci.yml)
+```
 
 ---
 

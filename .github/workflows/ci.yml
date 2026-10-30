@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────
+# PRACTICAL 12 — CI/CD PIPELINE WITH GITHUB ACTIONS
+# Installs dependencies and runs the Jest + Supertest
+# API tests on every push to main.
+#
+# MongoDB is provided by a service container, so the
+# workflow never needs MongoDB Atlas credentials.
+# ─────────────────────────────────────────────
+
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    # MongoDB service container used by the tests
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # Dedicated test database (never the real application data)
+    env:
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017/taskdb_test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run automated tests
+        run: npm test

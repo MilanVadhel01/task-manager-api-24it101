@@ -49,18 +49,11 @@ app.use((req, res, next) => {
 });
 
 // ─────────────────────────────────────────────
-// CONNECT TO MONGODB
-// Uses the connection string stored in .env
+// MONGODB CONNECTION
+// The connection is made by startServer() at the bottom
+// of this file, and only when the file is run directly
+// (never when Jest imports the app for testing).
 // ─────────────────────────────────────────────
-mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => {
-        console.log('✅ Connected to MongoDB successfully');
-    })
-    .catch((err) => {
-        console.error('❌ MongoDB connection failed:', err.message);
-        process.exit(1); // Stop the server if DB connection fails
-    });
 
 // ─────────────────────────────────────────────
 // ROUTES — CRUD OPERATIONS
@@ -250,8 +243,33 @@ app.use((err, req, res, next) => {
 });
 
 // ─────────────────────────────────────────────
-// START THE SERVER
+// START THE SERVER (Practical 12)
+// Connects to MongoDB first, then starts listening.
+// Only runs when this file is executed directly
+// (`npm start` / `node server.js`). When Jest imports
+// this module it receives the app WITHOUT a database
+// connection, process.exit() call, or open port — so the
+// test suite can connect to its own test database.
 // ─────────────────────────────────────────────
-app.listen(PORT, () => {
-    console.log(`🚀 Server is running on port ${PORT}`);
-});
+async function startServer() {
+    try {
+        // Uses the connection string stored in .env
+        await mongoose.connect(process.env.MONGO_URI);
+        console.log('✅ Connected to MongoDB successfully');
+
+        app.listen(PORT, () => {
+            console.log(`🚀 Server is running on port ${PORT}`);
+        });
+    } catch (err) {
+        console.error('❌ MongoDB connection failed:', err.message);
+        process.exit(1); // Stop the server if DB connection fails
+    }
+}
+
+if (require.main === module) {
+    startServer();
+}
+
+// Export the Express application so Supertest can test it
+// without starting a real server (Practical 12)
+module.exports = app;
